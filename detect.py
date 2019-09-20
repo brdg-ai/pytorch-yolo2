@@ -24,8 +24,13 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
         pil_frame = Image.fromarray(frame.astype('uint8'), 'RGB')
         frames.append(pil_frame)
 
+    ## Prepare annotation output dir to put json and per image annotations
+    annotation_output_dir = f'{outputdir}/annotations/{video_filename_base}'
+    if not os.path.exists(annotation_output_dir):
+        os.makedirs(annotation_output_dir)
+
     ## Prepare json output
-    json_filename = f'{outputdir}/annotations-{video_filename_base}.jsonl'
+    json_filename = f'{annotation_output_dir}/annotations-{video_filename_base}.jsonl'
     json_output = []
 
     ## Prepare model
@@ -46,31 +51,40 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
 
     ## Run model
     for img_id, img in enumerate(frames, start=1):
-        sized = img.resize((m.width, m.height))
-        
         print(f"Analyzing frame {img_id}")
+
+        sized = img.resize((m.width, m.height))
         boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
+
+        ## Write detections to per-frame file to calculate mAP
+        mAP_output_file = f"{annotation_output_dir}/image_{img_id}.txt"
 
         ## Add frame to output json
         frame_json = {}
         frame_json["frame_no"] = img_id
         frame_json["boxes"] = []
-        for i in range(len(boxes)):
-            box = boxes[i]
-            x1 = (box[0] - box[2]/2.0) * img.width
-            y1 = (box[1] - box[3]/2.0) * img.height
-            x2 = (box[0] + box[2]/2.0) * img.width
-            y2 = (box[1] + box[3]/2.0) * img.height
-            cls_conf = box[5]
-            cls_id = box[6]
-            box_json = {"x1": int(x1.item()),
-                        "x2": int(x2.item()),
-                        "y1": int(y1.item()),
-                        "y2": int(y2.item()),
-                        "conf":round(cls_conf.item(), 3),
-                        "class_id":cls_id.item(),
-                        "class":class_names[cls_id.item()]}
-            frame_json["boxes"].append(box_json)
+        with open(mAP_output_file, "w+") as mf:
+            for i in range(len(boxes)):
+                box = boxes[i]
+                x1 = int(((box[0] - box[2]/2.0) * img.width).item())
+                y1 = int(((box[1] - box[3]/2.0) * img.height).item())
+                x2 = int(((box[0] + box[2]/2.0) * img.width).item())
+                y2 = int(((box[1] + box[3]/2.0) * img.height).item())
+                cls_conf = round(box[5].item(), 4)
+                cls_id = box[6].item()
+                class_name = class_names[cls_id].replace(" ", "-")
+                # (0,0) from upper left
+                box_json = {"x1": x1,
+                            "x2": x2,
+                            "y1": y1,
+                            "y2": y2,
+                            "conf":cls_conf,
+                            "class_id":cls_id,
+                            "class":class_name}
+                frame_json["boxes"].append(box_json)
+                # <class-name> <left> <top> <right> <bottom> [<difficult>]
+                mAP_line = f"{class_name} {cls_conf} {x1} {y1} {x2} {y2}\n"
+                mf.write(mAP_line)
         json_output.append(frame_json)
 
         ## Add frame to output video
@@ -78,10 +92,11 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
         annotated_img = np.array(annotated_img)
         video_writer.writeFrame(annotated_img)
 
+
+    print(f"Writing per image annotations to {annotation_output_dir}")
     with jsonlines.open(json_filename, mode='w') as json_writer:
         json_writer.write_all(json_output)
         print(f"Writing annotations to {json_filename}")
-
     print(f"Writing annotated video to {output_video_filename}")
     video_writer.close()
 
