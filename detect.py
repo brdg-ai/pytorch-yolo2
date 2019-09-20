@@ -5,6 +5,81 @@ from models.tiny_yolo import TinyYoloNet
 from utils import *
 from darknet import Darknet
 
+import scipy
+import skvideo.io
+import skvideo.utils
+import skimage.transform
+import jsonlines
+
+def detect_video(cfgfile, weightfile, videofile, outputdir):
+
+    video_reader = skvideo.io.FFmpegReader(videofile)
+    video_filename = os.path.basename(videofile)
+    video_writer = skvideo.io.FFmpegWriter(f"{outputdir}/out2-{video_filename}")
+    frames = []
+    for frame_num, frame in enumerate(video_reader.nextFrame(), start=1):
+        pil_frame = Image.fromarray(frame.astype('uint8'), 'RGB')
+        frames.append(pil_frame)
+
+    m = Darknet(cfgfile)
+
+    m.print_network()
+    m.load_weights(weightfile)
+    print('Loading weights from %s... Done!' % (weightfile))
+
+    if m.num_classes == 20:
+        namesfile = 'data/voc.names'
+    elif m.num_classes == 80:
+        namesfile = 'data/coco.names'
+    else:
+        namesfile = 'data/names'
+    
+    use_cuda = 1
+    if use_cuda:
+        m.cuda()
+
+    #imgfile =  "data/dog.jpg"
+    #img = Image.open(imgfile).convert('RGB')
+    json_output = []
+    class_names = load_class_names(namesfile)
+    for img_id, img in enumerate(frames):
+        sized = img.resize((m.width, m.height))
+        
+        for i in range(2):
+            start = time.time()
+            boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
+            finish = time.time()
+            if i == 1:
+                print('%s: Predicted in %f seconds.' % (imgfile, (finish-start)))
+
+        frame_json = {}
+        frame_json["frame_no"] = img_id
+        frame_json["boxes"] = []
+        for i in range(len(boxes)):
+            box = boxes[i]
+            x1 = (box[0] - box[2]/2.0) * img.width
+            y1 = (box[1] - box[3]/2.0) * img.height
+            x2 = (box[0] + box[2]/2.0) * img.width
+            y2 = (box[1] + box[3]/2.0) * img.height
+            cls_conf = box[5]
+            cls_id = box[6]
+            box_json = {"x1": int(x1.item()),
+                        "x2": int(x2.item()),
+                        "y1": int(y1.item()),
+                        "y2": int(y2.item()),
+                        "conf":round(cls_conf.item(), 3),
+                        "class_id":cls_id.item(),
+                        "class":class_names[cls_id.item()]}
+            frame_json["boxes"].append(box_json)
+        json_output.append(frame_json)
+
+        annotated_img = plot_boxes(img, boxes, None, class_names)
+        annotated_img = np.array(annotated_img)
+        video_writer.writeFrame(annotated_img)
+    with jsonlines.open(f'{outputdir}/output.jsonl', mode='w') as json_writer:
+        json_writer.write_all(json_output)
+    video_writer.close()
+
 def detect(cfgfile, weightfile, imgfile):
     m = Darknet(cfgfile)
 
@@ -106,14 +181,16 @@ def detect_skimage(cfgfile, weightfile, imgfile):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 4:
+    if len(sys.argv) == 5:
         cfgfile = sys.argv[1]
         weightfile = sys.argv[2]
         imgfile = sys.argv[3]
-        detect(cfgfile, weightfile, imgfile)
+        outputdir = sys.argv[4]
+        detect_video(cfgfile, weightfile, imgfile, outputdir)
+        #detect(cfgfile, weightfile, imgfile)
         #detect_cv2(cfgfile, weightfile, imgfile)
         #detect_skimage(cfgfile, weightfile, imgfile)
     else:
         print('Usage: ')
-        print('  python detect.py cfgfile weightfile imgfile')
+        print('  python detect.py cfgfile weightfile imgfile outputdir')
         #detect('cfg/tiny-yolo-voc.cfg', 'tiny-yolo-voc.weights', 'data/person.jpg', version=1)
