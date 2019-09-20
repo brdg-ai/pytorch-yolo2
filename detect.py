@@ -47,7 +47,7 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
     for img_id, img in enumerate(frames):
         sized = img.resize((m.width, m.height))
         
-        print(f"Analyzing frame {img_id}:")
+        print(f"Analyzing frame {img_id}")
         boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
 
         ## Add frame to output json
