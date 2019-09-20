@@ -13,45 +13,44 @@ import jsonlines
 
 def detect_video(cfgfile, weightfile, videofile, outputdir):
 
+    ## Prepare json output
+    json_filename = f'{outputdir}/annotations.jsonl'
+    json_output = []
+
+    ## Read frames from video
     video_reader = skvideo.io.FFmpegReader(videofile)
     video_filename = os.path.basename(videofile)
-    video_writer = skvideo.io.FFmpegWriter(f"{outputdir}/out2-{video_filename}")
+    output_video_filename = f"{outputdir}/annotated-{video_filename}"
+    video_writer = skvideo.io.FFmpegWriter(output_video_filename)
     frames = []
     for frame_num, frame in enumerate(video_reader.nextFrame(), start=1):
         pil_frame = Image.fromarray(frame.astype('uint8'), 'RGB')
         frames.append(pil_frame)
 
+    ## Prepare model
     m = Darknet(cfgfile)
-
     m.print_network()
     m.load_weights(weightfile)
     print('Loading weights from %s... Done!' % (weightfile))
-
     if m.num_classes == 20:
         namesfile = 'data/voc.names'
     elif m.num_classes == 80:
         namesfile = 'data/coco.names'
     else:
         namesfile = 'data/names'
-    
     use_cuda = 1
     if use_cuda:
         m.cuda()
-
-    #imgfile =  "data/dog.jpg"
-    #img = Image.open(imgfile).convert('RGB')
-    json_output = []
     class_names = load_class_names(namesfile)
+
+    ## Run model
     for img_id, img in enumerate(frames):
         sized = img.resize((m.width, m.height))
         
-        for i in range(2):
-            start = time.time()
-            boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
-            finish = time.time()
-            if i == 1:
-                print('%s: Predicted in %f seconds.' % (imgfile, (finish-start)))
+        print(f"Analyzing frame {img_id}:")
+        boxes = do_detect(m, sized, 0.5, 0.4, use_cuda)
 
+        ## Add frame to output json
         frame_json = {}
         frame_json["frame_no"] = img_id
         frame_json["boxes"] = []
@@ -73,11 +72,16 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
             frame_json["boxes"].append(box_json)
         json_output.append(frame_json)
 
+        ## Add frame to output video
         annotated_img = plot_boxes(img, boxes, None, class_names)
         annotated_img = np.array(annotated_img)
         video_writer.writeFrame(annotated_img)
-    with jsonlines.open(f'{outputdir}/output.jsonl', mode='w') as json_writer:
+
+    with jsonlines.open(json_filename, mode='w') as json_writer:
         json_writer.write_all(json_output)
+        print(f"Writing annotations to {json_filename}")
+
+    print(f"Writing annotated video to {output_video_filename}")
     video_writer.close()
 
 def detect(cfgfile, weightfile, imgfile):
