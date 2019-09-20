@@ -13,19 +13,20 @@ import jsonlines
 
 def detect_video(cfgfile, weightfile, videofile, outputdir):
 
-    ## Prepare json output
-    json_filename = f'{outputdir}/annotations.jsonl'
-    json_output = []
-
     ## Read frames from video
     video_reader = skvideo.io.FFmpegReader(videofile)
     video_filename = os.path.basename(videofile)
+    video_filename_base = video_filename.split(".")[0]
     output_video_filename = f"{outputdir}/annotated-{video_filename}"
     video_writer = skvideo.io.FFmpegWriter(output_video_filename)
     frames = []
     for frame_num, frame in enumerate(video_reader.nextFrame(), start=1):
         pil_frame = Image.fromarray(frame.astype('uint8'), 'RGB')
         frames.append(pil_frame)
+
+    ## Prepare json output
+    json_filename = f'{outputdir}/annotations-{video_filename_base}.jsonl'
+    json_output = []
 
     ## Prepare model
     m = Darknet(cfgfile)
@@ -44,7 +45,7 @@ def detect_video(cfgfile, weightfile, videofile, outputdir):
     class_names = load_class_names(namesfile)
 
     ## Run model
-    for img_id, img in enumerate(frames):
+    for img_id, img in enumerate(frames, start=1):
         sized = img.resize((m.width, m.height))
         
         print(f"Analyzing frame {img_id}")
